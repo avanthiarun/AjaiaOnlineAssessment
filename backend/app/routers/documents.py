@@ -1,6 +1,10 @@
 """Document CRUD. Permission checks live in app.permissions, logic in app.services."""
 
-from fastapi import APIRouter, Depends, Response, status
+import re
+from typing import Literal
+
+from fastapi import APIRouter, Depends, Query, Response, status
+from markdownify import markdownify
 from sqlalchemy.orm import Session
 
 from app.auth.deps import get_current_user
@@ -70,3 +74,19 @@ def delete_document(
     doc, _ = load_doc_for(db, doc_id, user, "delete")
     service.delete_document(db, doc)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get("/{doc_id}/export")
+def export_document(
+    doc_id: str,
+    fmt: Literal["md", "html"] = Query("html", alias="format"),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> Response:
+    """Download a document the user can view as Markdown or HTML."""
+    doc, _ = load_doc_for(db, doc_id, user, "view")
+    body = markdownify(doc.content_html, heading_style="ATX") if fmt == "md" else doc.content_html
+    name = re.sub(r"[^A-Za-z0-9 _-]", "", doc.title).strip() or "document"  # ASCII-safe header
+    media = "text/markdown" if fmt == "md" else "text/html"
+    headers = {"Content-Disposition": f'attachment; filename="{name}.{fmt}"'}
+    return Response(body, media_type=media, headers=headers)
