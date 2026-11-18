@@ -5,7 +5,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, inspect, text
 
-from app.db import add_missing_columns
+from app.db import run_migrations
 from tests.helpers import create_doc, share
 
 CONFLICT = "This document was changed by someone else."
@@ -50,17 +50,18 @@ def test_title_rename_needs_no_version_and_does_not_bump_it(alice: TestClient) -
     assert alice.get("/api/documents").json()["owned"][0]["version"] == 2
 
 
-def test_add_missing_columns_is_idempotent(tmp_path: Path) -> None:
+def test_run_migrations_is_idempotent(tmp_path: Path) -> None:
     engine = create_engine(f"sqlite:///{(tmp_path / 'old.db').as_posix()}")
     with engine.begin() as conn:  # a documents table from before the version column existed
         conn.execute(text("CREATE TABLE documents (id VARCHAR(36) PRIMARY KEY, title VARCHAR(200))"))
         conn.execute(text("INSERT INTO documents (id, title) VALUES ('d1', 'Old doc')"))
 
-    add_missing_columns(engine)
-    add_missing_columns(engine)
+    run_migrations(engine)
+    run_migrations(engine)
 
     columns = [c["name"] for c in inspect(engine).get_columns("documents")]
     assert columns.count("version") == 1
+    assert columns.count("updated_by_id") == 1
     with engine.connect() as conn:
         assert conn.execute(text("SELECT version FROM documents WHERE id = 'd1'")).scalar_one() == 1
     engine.dispose()

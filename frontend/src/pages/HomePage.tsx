@@ -110,6 +110,16 @@ export function HomePage() {
     }
   }
 
+  async function leave(id: string) {
+    setActionError("");
+    try {
+      await api.leaveDocument(id);
+      setDocs((current) => current && { ...current, shared: current.shared.filter((d) => d.id !== id) });
+    } catch (err) {
+      setActionError(errorMessage(err, "Could not leave the document."));
+    }
+  }
+
   return (
     <>
       <TopBar />
@@ -168,7 +178,7 @@ export function HomePage() {
               )}
             </DocSection>
             <DocSection title="Shared with me" docs={docs?.shared} empty="Nothing has been shared with you yet.">
-              {(doc) => <DocumentRow key={doc.id} doc={doc} shared />}
+              {(doc) => <DocumentRow key={doc.id} doc={doc} shared onLeave={() => leave(doc.id)} />}
             </DocSection>
           </>
         )}

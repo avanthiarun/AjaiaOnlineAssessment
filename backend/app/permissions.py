@@ -1,4 +1,22 @@
-"""The single place that decides who can view, edit, share or delete a document."""
+"""The single place that decides who can view, comment, edit, share, delete or transfer a document.
+
+    action     owner  editor  commenter  viewer  (no access)
+    view       yes    yes     yes        yes     404
+    comment    yes    yes     yes        no      404
+    edit       yes    yes     no         no      404
+    share      yes    no      no         no      404
+    delete     yes    no      no         no      404
+    transfer   yes    no      no         no      404
+
+On an existing comment (the caller must also be able to view the document):
+
+    action     owner  editor  commenter  viewer
+    resolve    yes    yes     author     author
+    delete     yes    author  author     author
+
+"author" means only on their own comments. "no" is a 403. Users without access get 404 for
+everything, so document IDs don't leak. tests/test_permissions.py checks every cell of both tables.
+"""
 
 from collections.abc import Callable
 from typing import Literal
@@ -9,8 +27,9 @@ from sqlalchemy.orm import Session
 
 from app.models import Document, DocumentShare, User
 
-Role = Literal["owner", "editor", "viewer"]
-Need = Literal["view", "edit", "share", "delete"]
+Role = Literal["owner", "editor", "commenter", "viewer"]
+Need = Literal["view", "comment", "edit", "share", "delete", "transfer"]
+CommentAction = Literal["resolve", "delete"]
 
 
 def get_role(db: Session, doc: Document, user: User) -> Role | None:
@@ -30,27 +49,43 @@ def can_view(role: Role | None) -> bool:
     return role is not None
 
 
+def can_comment(role: Role | None) -> bool:
+    """Everyone except viewers can comment."""
+    return role in ("owner", "editor", "commenter")
+
+
 def can_edit(role: Role | None) -> bool:
     """Owners and editors can edit."""
     return role in ("owner", "editor")
 
 
-def can_share(role: Role | None) -> bool:
-    """Only the owner can manage sharing."""
-    return role == "owner"
-
-
-def can_delete(role: Role | None) -> bool:
-    """Only the owner can delete."""
+def is_owner(role: Role | None) -> bool:
+    """Sharing, deleting and transferring ownership are owner-only."""
     return role == "owner"
 
 
 _CHECKS: dict[Need, Callable[[Role | None], bool]] = {
     "view": can_view,
+    "comment": can_comment,
     "edit": can_edit,
-    "share": can_share,
-    "delete": can_delete,
+    "share": is_owner,
+    "delete": is_owner,
+    "transfer": is_owner,
 }
+
+
+def comment_action_allowed(role: Role, is_author: bool, action: CommentAction) -> bool:
+    """Editors and the owner may resolve any comment; only the owner may delete any comment.
+    Authors may always resolve or delete their own."""
+    if is_author:
+        return True
+    return can_edit(role) if action == "resolve" else is_owner(role)
+
+
+def check_comment_action(role: Role, is_author: bool, action: CommentAction) -> None:
+    """403 unless comment_action_allowed."""
+    if not comment_action_allowed(role, is_author, action):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, f"You do not have permission to {action} this comment")
 
 
 def load_doc_for(db: Session, doc_id: str, user: User, need: Need) -> tuple[Document, Role]:

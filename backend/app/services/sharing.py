@@ -56,6 +56,29 @@ def set_role(db: Session, doc: Document, user_id: str, role: ShareRole) -> Docum
     return share
 
 
+def transfer_ownership(db: Session, doc: Document, email: str) -> None:
+    """Make the user at `email` the owner; the old owner stays on as an editor.
+
+    The new owner must already have access. Their share row is removed (owners don't have
+    one) and the old owner gets an editor share, all committed together.
+    """
+    target = db.scalar(select(User).where(User.email == email))
+    if target is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "No user with that email")
+    if target.id == doc.owner_id:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "You already own this document")
+    share = _get_share(db, doc, target.id)
+    if share is None:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Share the document with them before making them the owner")
+
+    old_owner_id = doc.owner_id
+    db.delete(share)
+    db.flush()  # free the (document, user) slot before the old owner's share is inserted
+    doc.owner_id = target.id
+    db.add(DocumentShare(document_id=doc.id, user_id=old_owner_id, role=ShareRole.EDITOR))
+    db.commit()
+
+
 def revoke(db: Session, doc: Document, user_id: str) -> None:
     """Remove a user's access (404 if they had none)."""
     share = _get_share(db, doc, user_id)

@@ -69,7 +69,10 @@ def get_db() -> Iterator[Session]:
 
 
 # (table, column, SQL type + constraints) added after the first production deploy.
-ADDED_COLUMNS = [("documents", "version", "INTEGER NOT NULL DEFAULT 1")]
+ADDED_COLUMNS = [
+    ("documents", "version", "INTEGER NOT NULL DEFAULT 1"),
+    ("documents", "updated_by_id", "VARCHAR(36) REFERENCES users(id)"),
+]
 
 
 def add_missing_columns(target: Engine) -> None:
@@ -86,12 +89,50 @@ def add_missing_columns(target: Engine) -> None:
                 conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}"))
 
 
-def init_db() -> None:
-    """Create missing tables, then add any missing columns.
+def update_share_role_check(target: Engine) -> None:
+    """Make an existing Postgres ck_share_role allow every current ShareRole (e.g. "commenter").
 
-    We skip Alembic on purpose for the 4h timebox; see add_missing_columns.
+    create_all() never alters constraints on existing tables. On Postgres we read the current
+    definition and, only if a role is missing, drop and re-add it in one transaction. SQLite
+    is skipped: it can't alter constraints, and its databases (tests, local dev) are recreated.
+    """
+    from app.models.share import SHARE_ROLE_CHECK, SHARE_ROLE_CHECK_NAME, ShareRole
+
+    if target.dialect.name != "postgresql":
+        return
+    with target.begin() as conn:
+        current = conn.execute(
+            text(
+                "SELECT pg_get_constraintdef(oid) FROM pg_constraint "
+                "WHERE conname = :name AND conrelid = 'document_shares'::regclass"
+            ),
+            {"name": SHARE_ROLE_CHECK_NAME},
+        ).scalar()
+        if current is not None and all(f"'{role.value}'" in current for role in ShareRole):
+            return
+        conn.execute(text(f"ALTER TABLE document_shares DROP CONSTRAINT IF EXISTS {SHARE_ROLE_CHECK_NAME}"))
+        conn.execute(
+            text(f"ALTER TABLE document_shares ADD CONSTRAINT {SHARE_ROLE_CHECK_NAME} CHECK ({SHARE_ROLE_CHECK})")
+        )
+
+
+def run_migrations(target: Engine) -> None:
+    """The small, idempotent schema changes create_all() can't make (our stand-in for Alembic):
+
+    1. add_missing_columns: new columns on existing tables (SQLite and Postgres).
+    2. update_share_role_check: widen the share-role CHECK constraint (Postgres only).
+    Every step checks the current schema first, so this is safe to run on every startup.
+    """
+    add_missing_columns(target)
+    update_share_role_check(target)
+
+
+def init_db() -> None:
+    """Create missing tables, then apply run_migrations.
+
+    We skip Alembic on purpose for the 4h timebox; see run_migrations.
     """
     import app.models  # noqa: F401  (registers models on Base.metadata)
 
     Base.metadata.create_all(engine)
-    add_missing_columns(engine)
+    run_migrations(engine)

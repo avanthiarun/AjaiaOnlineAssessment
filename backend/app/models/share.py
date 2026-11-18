@@ -16,19 +16,25 @@ if TYPE_CHECKING:
 
 
 class ShareRole(enum.StrEnum):
-    """Access level a shared user has on a document."""
+    """Access level a shared user has on a document (weakest first)."""
 
     VIEWER = "viewer"
+    COMMENTER = "commenter"
     EDITOR = "editor"
 
 
+# Postgres keeps the original constraint on existing tables; app.db.run_migrations updates it.
+SHARE_ROLE_CHECK_NAME = "ck_share_role"
+SHARE_ROLE_CHECK = "role IN (" + ", ".join(f"'{role.value}'" for role in ShareRole) + ")"
+
+
 class DocumentShare(Base):
-    """Grants one user viewer or editor access to one document."""
+    """Grants one user viewer, commenter or editor access to one document."""
 
     __tablename__ = "document_shares"
     __table_args__ = (
         UniqueConstraint("document_id", "user_id", name="uq_share_document_user"),
-        CheckConstraint("role IN ('viewer', 'editor')", name="ck_share_role"),
+        CheckConstraint(SHARE_ROLE_CHECK, name=SHARE_ROLE_CHECK_NAME),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))

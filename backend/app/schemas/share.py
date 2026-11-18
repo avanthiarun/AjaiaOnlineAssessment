@@ -19,6 +19,12 @@ class ShareRoleUpdate(BaseModel):
     role: ShareRole
 
 
+class TransferIn(BaseModel):
+    """Make another user (who already has access) the owner."""
+
+    email: NormalizedEmail
+
+
 class ShareOut(BaseModel):
     """One shared user and their role."""
 

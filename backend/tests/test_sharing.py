@@ -68,3 +68,17 @@ def test_revoke_removes_access(alice: TestClient, bob: TestClient) -> None:
 
     assert bob.get(f"/api/documents/{doc['id']}").status_code == 404
     assert bob.get("/api/documents").json()["shared"] == []
+
+
+def test_shared_user_can_leave_but_owner_cannot(alice: TestClient, bob: TestClient) -> None:
+    doc = create_doc(alice, title="Team doc")
+    share(alice, doc["id"], "bob@ajaia.test", "editor")
+
+    assert bob.delete(f"/api/documents/{doc['id']}/shares/me").status_code == 204
+
+    assert bob.get(f"/api/documents/{doc['id']}").status_code == 404
+    assert bob.get("/api/documents").json()["shared"] == []
+    owner_leave = alice.delete(f"/api/documents/{doc['id']}/shares/me")
+    assert owner_leave.status_code == 400
+    assert owner_leave.json() == {"detail": "Owners cannot leave their own document"}
+    assert alice.get(f"/api/documents/{doc['id']}").status_code == 200

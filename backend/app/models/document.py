@@ -30,8 +30,10 @@ class Document(Base):
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now, onupdate=utc_now)
     # Bumped on every content save; clients send it back as base_version to detect conflicts.
     version: Mapped[int] = mapped_column(default=1, server_default="1")
+    # Who saved the current content (NULL for documents saved before this column existed).
+    updated_by_id: Mapped[str | None] = mapped_column(ForeignKey("users.id"))
 
-    owner: Mapped["User"] = relationship()
+    owner: Mapped["User"] = relationship(foreign_keys=[owner_id])
     shares: Mapped[list["DocumentShare"]] = relationship(
         back_populates="document", cascade="all, delete-orphan", passive_deletes=True
     )

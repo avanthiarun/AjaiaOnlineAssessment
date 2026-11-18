@@ -1,6 +1,6 @@
 // Typed wrapper around the FastAPI backend. Every call sends the session cookie.
 
-export type Role = "owner" | "editor" | "viewer";
+export type Role = "owner" | "editor" | "commenter" | "viewer";
 export type ShareRole = Exclude<Role, "owner">;
 
 export interface User {
@@ -40,6 +40,42 @@ export interface Share {
 export interface ImportInfo {
   extensions: string[];
   max_mb: number;
+}
+
+export interface ActiveViewer {
+  id: string;
+  name: string;
+  role: Role;
+  is_editing: boolean;
+}
+
+export interface Presence {
+  viewers: ActiveViewer[];
+  version: number;
+  updated_at: string;
+}
+
+export interface VersionSummary {
+  id: string;
+  created_at: string;
+  created_by: string;
+}
+
+export interface VersionDetail extends VersionSummary {
+  title: string;
+  content_html: string;
+}
+
+/** quote and body are plain text: always render them as text, never as HTML. */
+export interface Comment {
+  id: string;
+  author: User;
+  quote: string;
+  body: string;
+  resolved: boolean;
+  created_at: string;
+  can_resolve: boolean;
+  can_delete: boolean;
 }
 
 export interface ShareList {
@@ -103,7 +139,18 @@ export const api = {
     return request<DocumentDetail>("POST", "/documents/import", form);
   },
   importInfo: () => request<ImportInfo>("GET", "/documents/import/info"),
+  presence: (id: string, editing: boolean) => request<Presence>("POST", `/documents/${id}/presence`, { editing }),
   exportUrl: (id: string, format: "md" | "html") => `/api/documents/${id}/export?format=${format}`,
+  listComments: (id: string) => request<Comment[]>("GET", `/documents/${id}/comments`),
+  createComment: (id: string, comment: { quote: string; body: string }) =>
+    request<Comment>("POST", `/documents/${id}/comments`, comment),
+  setCommentResolved: (id: string, commentId: string, resolved: boolean) =>
+    request<Comment>("PATCH", `/documents/${id}/comments/${commentId}`, { resolved }),
+  deleteComment: (id: string, commentId: string) => request<void>("DELETE", `/documents/${id}/comments/${commentId}`),
+  listVersions: (id: string) => request<VersionSummary[]>("GET", `/documents/${id}/versions`),
+  getVersion: (id: string, versionId: string) => request<VersionDetail>("GET", `/documents/${id}/versions/${versionId}`),
+  restoreVersion: (id: string, versionId: string) =>
+    request<DocumentDetail>("POST", `/documents/${id}/versions/${versionId}/restore`),
 
   // Sharing
   listShares: (docId: string) => request<ShareList>("GET", `/documents/${docId}/shares`),
@@ -112,5 +159,7 @@ export const api = {
   changeShareRole: (docId: string, userId: string, role: ShareRole) =>
     request<Share>("PATCH", `/documents/${docId}/shares/${userId}`, { role }),
   revokeShare: (docId: string, userId: string) => request<void>("DELETE", `/documents/${docId}/shares/${userId}`),
+  transferOwnership: (docId: string, email: string) =>
+    request<DocumentDetail>("POST", `/documents/${docId}/transfer`, { email }),
   leaveDocument: (docId: string) => request<void>("DELETE", `/documents/${docId}/shares/me`),
 };

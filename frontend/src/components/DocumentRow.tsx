@@ -1,31 +1,28 @@
-import { useEffect, useRef, useState, type KeyboardEvent } from "react";
+import { useCallback, useRef, useState, type KeyboardEvent } from "react";
 import { Link } from "react-router-dom";
 import type { DocumentSummary } from "../api/client";
+import { ROLE_LABEL } from "../utils/roles";
 import { formatRelative } from "../utils/time";
 import { DocIcon } from "./DocIcon";
+import { useDismiss } from "./useDismiss";
 
 interface Props {
   doc: DocumentSummary;
   shared?: boolean;
-  /** Owned rows get a Rename/Delete menu. */
+  /** Owned rows get Rename/Delete; shared rows get Leave. The menu shows whichever are given. */
   onRename?: (title: string) => Promise<void>;
   onDelete?: () => Promise<void>;
+  onLeave?: () => Promise<void>;
 }
 
-export function DocumentRow({ doc, shared = false, onRename, onDelete }: Props) {
+export function DocumentRow({ doc, shared = false, onRename, onDelete, onLeave }: Props) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const [draft, setDraft] = useState(doc.title);
   const menuRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!menuOpen) return;
-    const close = (event: MouseEvent) => {
-      if (!menuRef.current?.contains(event.target as Node)) setMenuOpen(false);
-    };
-    document.addEventListener("mousedown", close);
-    return () => document.removeEventListener("mousedown", close);
-  }, [menuOpen]);
+  const closeMenu = useCallback(() => setMenuOpen(false), []);
+  useDismiss(menuRef, menuOpen, closeMenu);
+  const hasMenu = Boolean(onRename || onDelete || onLeave);
 
   function startRename() {
     setMenuOpen(false);
@@ -45,9 +42,9 @@ export function DocumentRow({ doc, shared = false, onRename, onDelete }: Props) 
     if (event.key === "Escape") setRenaming(false);
   }
 
-  async function handleDelete() {
+  async function confirmThen(message: string, action?: () => Promise<void>) {
     setMenuOpen(false);
-    if (window.confirm(`Delete "${doc.title}"? This cannot be undone.`)) await onDelete?.();
+    if (window.confirm(message)) await action?.();
   }
 
   return (
@@ -70,14 +67,14 @@ export function DocumentRow({ doc, shared = false, onRename, onDelete }: Props) 
         <Link to={`/d/${doc.id}`} className="doc-row-main">
           <DocIcon />
           <span className="doc-title">{doc.title}</span>
-          {shared && <span className={`badge badge-${doc.role}`}>{doc.role === "editor" ? "Editor" : "Viewer"}</span>}
+          {shared && <span className={`badge badge-${doc.role}`}>{ROLE_LABEL[doc.role]}</span>}
         </Link>
       )}
       {shared && <span className="doc-owner">{doc.owner.name}</span>}
       <span className="doc-time" title={new Date(doc.updated_at).toLocaleString()}>
         {formatRelative(doc.updated_at)}
       </span>
-      {onRename && onDelete ? (
+      {hasMenu ? (
         <div className="menu" ref={menuRef}>
           <button
             className="icon-btn"
@@ -89,13 +86,33 @@ export function DocumentRow({ doc, shared = false, onRename, onDelete }: Props) 
             ⋮
           </button>
           {menuOpen && (
-            <div className="menu-list" role="menu" onKeyDown={(e) => e.key === "Escape" && setMenuOpen(false)}>
-              <button role="menuitem" autoFocus onClick={startRename}>
-                Rename
-              </button>
-              <button role="menuitem" className="danger" onClick={() => void handleDelete()}>
-                Delete
-              </button>
+            <div className="menu-list" role="menu">
+              {onRename && (
+                <button role="menuitem" autoFocus onClick={startRename}>
+                  Rename
+                </button>
+              )}
+              {onDelete && (
+                <button
+                  role="menuitem"
+                  className="danger"
+                  onClick={() => void confirmThen(`Delete "${doc.title}"? This cannot be undone.`, onDelete)}
+                >
+                  Delete
+                </button>
+              )}
+              {onLeave && (
+                <button
+                  role="menuitem"
+                  autoFocus
+                  className="danger"
+                  onClick={() =>
+                    void confirmThen(`Leave "${doc.title}"? You'll lose access until the owner shares it again.`, onLeave)
+                  }
+                >
+                  Leave
+                </button>
+              )}
             </div>
           )}
         </div>

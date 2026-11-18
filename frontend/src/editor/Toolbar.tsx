@@ -9,6 +9,7 @@ const ICONS = {
   numbers:
     "M2 17h2v.5H3v1h1v.5H2v1h3v-4H2v1zm1-9h1V4H2v1h1v3zm-1 3h1.8L2 13.1v.9h3v-1H3.2L5 10.9V10H2v1zm5-6v2h14V5H7zm0 14h14v-2H7v2zm0-6h14v-2H7v2z",
   quote: "M6 17h3l2-4V7H5v6h3zm8 0h3l2-4V7h-6v6h3z",
+  comment: "M21.99 4c0-1.1-.89-2-1.99-2H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h14l4 4-.01-18zM18 14H6v-2h12v2zm0-3H6V9h12v2zm0-3H6V6h12v2z",
 };
 
 function Icon({ path }: { path: string }) {
@@ -54,7 +55,15 @@ function currentStyle(editor: Editor): Style {
   return "p";
 }
 
-export function Toolbar({ editor, disabled }: { editor: Editor; disabled: boolean }) {
+interface ToolbarProps {
+  editor: Editor;
+  /** Disables the formatting tools (read-only roles, failed saves, previews). */
+  disabled: boolean;
+  /** Shown for anyone who may comment; not affected by `disabled` (commenters can't edit). */
+  onComment?: () => void;
+}
+
+export function Toolbar({ editor, disabled, onComment }: ToolbarProps) {
   const chain = () => editor.chain().focus();
   const mod = navigator.platform.includes("Mac") ? "⌘" : "Ctrl+";
 
@@ -107,6 +116,14 @@ export function Toolbar({ editor, disabled }: { editor: Editor; disabled: boolea
       <ToolButton label="Quote" shortcut={`${mod}Shift+B`} active={editor.isActive("blockquote")} disabled={disabled} onClick={() => chain().toggleBlockquote().run()}>
         <Icon path={ICONS.quote} />
       </ToolButton>
+      {onComment && (
+        <>
+          <span className="tool-sep" />
+          <ToolButton label="Comment" shortcut={`${mod}Alt+M`} onClick={onComment}>
+            <Icon path={ICONS.comment} />
+          </ToolButton>
+        </>
+      )}
     </div>
   );
 }

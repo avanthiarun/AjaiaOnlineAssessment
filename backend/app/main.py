@@ -15,7 +15,7 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from app.config import get_settings
 from app.db import SessionLocal, engine, init_db
-from app.routers import auth, documents, health, shares, uploads
+from app.routers import auth, comments, documents, health, presence, shares, uploads, versions
 from app.services.seed import seed_demo_users
 
 STATIC_DIR = Path(__file__).parent / "static"
@@ -90,7 +90,7 @@ async def security_headers(
     return response
 
 
-for module in (health, auth, documents, shares, uploads):
+for module in (health, auth, documents, shares, presence, versions, comments, uploads):
     app.include_router(module.router)
 
 

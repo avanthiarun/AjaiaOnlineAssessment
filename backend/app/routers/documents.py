@@ -19,11 +19,21 @@ from app.schemas.document import (
     DocumentSummary,
     DocumentUpdate,
 )
+from app.schemas.share import TransferIn
 from app.services import documents as service
+from app.services import sharing
 
 CONFLICT_MESSAGE = "This document was changed by someone else."
 
 router = APIRouter(prefix="/api/documents", tags=["documents"])
+
+
+def conflict_response(exc: service.VersionConflict) -> JSONResponse:
+    """409 telling the client its copy is stale, with the version it now has to reload."""
+    return JSONResponse(
+        status_code=status.HTTP_409_CONFLICT,
+        content={"detail": CONFLICT_MESSAGE, "current_version": exc.current_version},
+    )
 
 
 @router.get("", response_model=DocumentListOut)
@@ -71,13 +81,10 @@ def update_document(
     doc, role = load_doc_for(db, doc_id, user, "edit")
     try:
         doc = service.update_document(
-            db, doc, title=body.title, content_html=body.content_html, base_version=body.base_version
+            db, doc, user, title=body.title, content_html=body.content_html, base_version=body.base_version
         )
     except service.VersionConflict as exc:
-        return JSONResponse(
-            status_code=status.HTTP_409_CONFLICT,
-            content={"detail": CONFLICT_MESSAGE, "current_version": exc.current_version},
-        )
+        return conflict_response(exc)
     return DocumentDetail.from_doc(doc, role)
 
 
@@ -91,6 +98,17 @@ def delete_document(
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
+@router.post("/{doc_id}/transfer", response_model=DocumentDetail)
+def transfer_ownership(
+    doc_id: str, body: TransferIn, user: User = Depends(get_current_user), db: Session = Depends(get_db)
+) -> DocumentDetail:
+    """Owner only: hand the document to someone who has access; the caller becomes an editor."""
+    doc, _ = load_doc_for(db, doc_id, user, "transfer")
+    sharing.transfer_ownership(db, doc, body.email)
+    db.refresh(doc)
+    return DocumentDetail.from_doc(doc, "editor")
+
+
 @router.get("/{doc_id}/export")
 def export_document(
     doc_id: str,
@@ -100,7 +118,10 @@ def export_document(
 ) -> Response:
     """Download a document the user can view as Markdown or HTML."""
     doc, _ = load_doc_for(db, doc_id, user, "view")
-    body = markdownify(doc.content_html, heading_style="ATX") if fmt == "md" else doc.content_html
+    if fmt == "md":
+        body = markdownify(doc.content_html, heading_style="ATX")
+    else:
+        body = service.standalone_html(doc.title, doc.content_html)
     name = re.sub(r"[^A-Za-z0-9 _-]", "", doc.title).strip() or "document"  # ASCII-safe header
     media = "text/markdown" if fmt == "md" else "text/html"
     headers = {"Content-Disposition": f'attachment; filename="{name}.{fmt}"'}
