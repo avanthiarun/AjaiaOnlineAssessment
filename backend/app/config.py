@@ -21,10 +21,12 @@ class Settings(BaseSettings):
     seed_on_start: bool = True
 
     @model_validator(mode="after")
-    def require_secret_in_production(self) -> "Settings":
-        """Refuse to start in production with the built-in dev session secret."""
+    def require_production_settings(self) -> "Settings":
+        """Refuse to start in production with the dev secret or a container-local SQLite file."""
         if self.is_production and self.session_secret == DEV_SESSION_SECRET:
             raise ValueError("SESSION_SECRET must be set in production")
+        if self.is_production and self.database_url.startswith("sqlite"):
+            raise ValueError("DATABASE_URL must point to Postgres in production (SQLite would be wiped on redeploy)")
         return self
 
     @property

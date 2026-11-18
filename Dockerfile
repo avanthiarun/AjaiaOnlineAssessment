@@ -22,4 +22,7 @@ RUN useradd --create-home --uid 1000 appuser && chown -R appuser:appuser /srv
 USER appuser
 
 EXPOSE 8000
-CMD uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000} --proxy-headers --forwarded-allow-ips="*"
+# Shell form so ${PORT} expands (Railway injects it); `exec` makes uvicorn PID 1 so it
+# receives SIGTERM and shuts down gracefully on redeploy. --proxy-headers trusts Railway's
+# X-Forwarded-Proto so the app knows requests arrived over HTTPS.
+CMD exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000} --proxy-headers --forwarded-allow-ips="*"
