@@ -31,6 +31,9 @@ SECURITY_HEADERS = {
     ),
     "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
 }
+# Production is HTTPS-only (Railway terminates TLS), so tell browsers never to use plain HTTP.
+# Not sent in development, where the app runs on http://localhost.
+HSTS_HEADER = "max-age=31536000"
 
 logging.basicConfig(
     level=logging.INFO,
@@ -54,7 +57,16 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     yield
 
 
-app = FastAPI(title="Ajaia Docs", lifespan=lifespan)
+# Interactive API docs only in development: production has no use for them, and its CSP
+# (script-src 'self') would block Swagger UI's CDN scripts anyway.
+_docs = not settings.is_production
+app = FastAPI(
+    title="Ajaia Docs",
+    lifespan=lifespan,
+    docs_url="/docs" if _docs else None,
+    redoc_url="/redoc" if _docs else None,
+    openapi_url="/openapi.json" if _docs else None,
+)
 
 app.add_middleware(
     SessionMiddleware,
@@ -87,6 +99,8 @@ async def security_headers(
     """Attach basic security headers to every response."""
     response = await call_next(request)
     response.headers.update(SECURITY_HEADERS)
+    if settings.is_production:
+        response.headers["Strict-Transport-Security"] = HSTS_HEADER
     return response
 
 

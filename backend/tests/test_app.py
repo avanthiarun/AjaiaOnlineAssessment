@@ -1,11 +1,13 @@
 """App-wide behavior: security headers and the catch-all error handler."""
 
 import logging
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
 
-from app.main import SECURITY_HEADERS
+from app import main
+from app.main import HSTS_HEADER, SECURITY_HEADERS
 from app.services import documents as document_service
 
 EXPECTED_CSP = (
@@ -22,6 +24,15 @@ def test_responses_carry_security_headers(anon: TestClient) -> None:
     assert response.headers["permissions-policy"] == "camera=(), microphone=(), geolocation=()"
     assert response.headers["x-content-type-options"] == "nosniff"
     assert response.headers["x-frame-options"] == "DENY"
+    assert "strict-transport-security" not in response.headers  # dev runs on plain http://localhost
+
+
+def test_production_responses_add_hsts(anon: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(main, "settings", SimpleNamespace(is_production=True))
+
+    response = anon.get("/api/health")
+
+    assert response.headers["strict-transport-security"] == HSTS_HEADER
 
 
 def test_unhandled_error_returns_generic_500_and_logs_traceback(

@@ -24,7 +24,7 @@ def _read_limited(file: UploadFile, max_bytes: int) -> bytes:
         data.extend(chunk)
         if len(data) > max_bytes:
             raise HTTPException(
-                status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                status.HTTP_413_CONTENT_TOO_LARGE,
                 f"File is larger than {max_bytes // (1024 * 1024)} MB",
             )
     return bytes(data)

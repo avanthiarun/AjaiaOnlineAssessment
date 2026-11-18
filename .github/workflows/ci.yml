@@ -22,6 +22,8 @@ jobs:
       - run: pip install -r requirements-dev.txt
       - run: ruff check .
       - run: pytest -q
+      # Known vulnerabilities in pinned runtime dependencies fail the build.
+      - run: pip-audit -r requirements.txt
 
   frontend:
     runs-on: ubuntu-latest
@@ -36,5 +38,8 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci
+      # High/critical advisories in runtime packages fail the build. (The moderate TipTap 2 advisory
+      # is mitigated by the server sanitizer: backend/tests/test_documents.py::test_sanitizer_drops_unknown_attributes.)
+      - run: npm audit --omit=dev --audit-level=high
       - run: npm test -- --run
       - run: npm run build

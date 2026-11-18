@@ -34,3 +34,14 @@ def test_html_is_sanitized(alice: TestClient) -> None:
     html = alice.patch(f"/api/documents/{doc['id']}", json={"content_html": dirty}).json()["content_html"]
 
     assert html == "<h2>Title</h2><p><strong>Safe</strong></p>"
+
+
+def test_sanitizer_drops_unknown_attributes(alice: TestClient) -> None:
+    # Also our mitigation for TipTap 2 advisory GHSA-cp6q-959q-f8rh (a crafted "__proto__"
+    # attribute): stored HTML keeps only href on <a> plus nh3's harmless global title/lang.
+    doc = create_doc(alice)
+    dirty = '<p __proto__="x" style="color:red" class="c" id="i"><a href="https://a.test">a</a></p>'
+
+    html = alice.patch(f"/api/documents/{doc['id']}", json={"content_html": dirty}).json()["content_html"]
+
+    assert html == '<p><a href="https://a.test" rel="noopener noreferrer nofollow">a</a></p>'

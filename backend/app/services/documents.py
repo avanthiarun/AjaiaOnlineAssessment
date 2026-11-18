@@ -65,7 +65,7 @@ def _check_content_size(html: str) -> None:
     """Reject content over MAX_CONTENT_BYTES with 413."""
     if len(html.encode()) > MAX_CONTENT_BYTES:
         raise HTTPException(
-            status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            status.HTTP_413_CONTENT_TOO_LARGE,
             f"Document content exceeds {MAX_CONTENT_BYTES // 1024} KB",
         )
 
