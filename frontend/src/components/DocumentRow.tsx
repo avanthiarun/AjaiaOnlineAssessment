@@ -70,7 +70,7 @@ export function DocumentRow({ doc, shared = false, onRename, onDelete, onLeave }
           {shared && <span className={`badge badge-${doc.role}`}>{ROLE_LABEL[doc.role]}</span>}
         </Link>
       )}
-      {shared && <span className="doc-owner">{doc.owner.name}</span>}
+      <span className="doc-owner">{shared ? doc.owner.name : "me"}</span>
       <span className="doc-time" title={new Date(doc.updated_at).toLocaleString()}>
         {formatRelative(doc.updated_at)}
       </span>

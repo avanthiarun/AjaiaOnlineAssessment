@@ -1,17 +1,19 @@
 import { EditorContent, useEditor } from "@tiptap/react";
-import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api, ApiError, type ActiveViewer, type DocumentDetail, type VersionDetail } from "../api/client";
+import { Icon } from "../components/Icon";
 import { TopBar } from "../components/TopBar";
-import { useDismiss } from "../components/useDismiss";
+import { CommentsPanel, QUOTE_MAX_LENGTH } from "../editor/CommentsPanel";
 import { EDITOR_EXTENSIONS } from "../editor/extensions";
+import { FileMenu } from "../editor/FileMenu";
 import { PresenceAvatars } from "../editor/PresenceAvatars";
 import { ShareDialog } from "../editor/ShareDialog";
+import { TitleInput } from "../editor/TitleInput";
 import { Toolbar } from "../editor/Toolbar";
 import { useAutosave, type SaveStatus } from "../editor/useAutosave";
 import { usePresence } from "../editor/usePresence";
 import { VersionHistory, VersionPreview } from "../editor/VersionHistory";
-import { CommentsPanel, QUOTE_MAX_LENGTH } from "../editor/CommentsPanel";
 import { canCommentRole, canEditRole, ROLE_LABEL } from "../utils/roles";
 
 const NOT_FOUND = "This document doesn't exist or you don't have access.";
@@ -19,6 +21,15 @@ const FORBIDDEN = "You no longer have permission to edit this document.";
 const CONFLICT = "Someone else edited this document. Reload to see their changes.";
 const CONFLICT_COPIED = `${CONFLICT} Your unsaved text is copied to the clipboard.`;
 const EDITING_WINDOW_MS = 15_000;
+
+const STATUS_LABEL: Record<SaveStatus, string> = {
+  saved: "All changes saved",
+  saving: "Saving…",
+  retrying: "Couldn't save, retrying",
+  failed: "Couldn't save",
+};
+
+type Panel = "history" | "comments" | null;
 
 /** Best guess at who saved the newer version: the one person currently typing, if there is one. */
 function whoUpdated(viewers: ActiveViewer[]): string {
@@ -71,13 +82,10 @@ export function EditorPage() {
   return <DocumentWorkspace key={`${doc.id}:${loadCount}`} doc={doc} onReload={() => setLoadCount((n) => n + 1)} />;
 }
 
-const STATUS_LABEL: Record<SaveStatus, string> = {
-  saved: "All changes saved",
-  saving: "Saving…",
-  retrying: "Couldn't save, retrying",
-  failed: "Couldn't save",
-};
-
+/**
+ * One open document: editor + autosave (with conflict detection), header and menus, presence,
+ * and the comments / version-history side panels.
+ */
 function DocumentWorkspace({ doc, onReload }: { doc: DocumentDetail; onReload: () => void }) {
   const navigate = useNavigate();
   const canEdit = canEditRole(doc.role);
@@ -85,19 +93,15 @@ function DocumentWorkspace({ doc, onReload }: { doc: DocumentDetail; onReload: (
   const isOwner = doc.role === "owner";
 
   const [title, setTitle] = useState(doc.title);
-  const savedTitle = useRef(doc.title);
   const [headerError, setHeaderError] = useState("");
   const [shareOpen, setShareOpen] = useState(false);
-  const [panel, setPanel] = useState<"history" | "comments" | null>(null); // one side panel at a time
+  const [panel, setPanel] = useState<Panel>(null); // one side panel at a time
   const [preview, setPreview] = useState<VersionDetail | null>(null);
   const [commentDraft, setCommentDraft] = useState<string | null>(null);
-  const [downloadOpen, setDownloadOpen] = useState(false);
-  const downloadRef = useRef<HTMLDivElement>(null);
-  const closeDownload = useCallback(() => setDownloadOpen(false), []);
-  useDismiss(downloadRef, downloadOpen, closeDownload);
   const [conflict, setConflict] = useState<string | null>(null);
   // The version our content is based on; sent as base_version so stale saves get a 409.
   const version = useRef(doc.version);
+  const lastTypedAt = useRef(0);
 
   const autosave = useAutosave(async (html) => {
     try {
@@ -108,21 +112,10 @@ function DocumentWorkspace({ doc, onReload }: { doc: DocumentDetail; onReload: (
       throw friendlySaveError(err); // 409 is a 4xx, so the queue stops instead of retrying
     }
   });
+  const { flush, hasUnsaved } = autosave;
 
-  /** Save the user's text to the clipboard (best effort) before telling them to reload. */
-  async function reportConflict() {
-    let copied = false;
-    try {
-      await navigator.clipboard.writeText(editor?.getText() ?? "");
-      copied = true;
-    } catch {
-      // Clipboard can be blocked (permissions, unfocused tab); the banner just won't promise a copy.
-    }
-    setConflict(copied ? CONFLICT_COPIED : CONFLICT);
-  }
   // While previewing a version the editor is hidden, so the toolbar must not change it.
   const locked = !canEdit || autosave.status === "failed" || preview !== null;
-  const lastTypedAt = useRef(0);
 
   const editor = useEditor({
     extensions: EDITOR_EXTENSIONS,
@@ -134,32 +127,30 @@ function DocumentWorkspace({ doc, onReload }: { doc: DocumentDetail; onReload: (
     },
   });
 
-  const presence = usePresence(doc.id, () => canEdit && Date.now() - lastTypedAt.current < EDITING_WINDOW_MS);
-  // Set when the server has a newer version and we have nothing unsaved to lose by reloading.
-  const [updatedBy, setUpdatedBy] = useState<string | null>(null);
-  const { hasUnsaved } = autosave;
-  useEffect(() => {
-    if (presence && presence.version > version.current && !hasUnsaved()) setUpdatedBy(whoUpdated(presence.viewers));
-  }, [presence, hasUnsaved]);
-
   // Stop editing if the server starts refusing saves (e.g. access was revoked).
   // emitUpdate=false: toggling editability must not look like a content change (and trigger a save).
   useEffect(() => {
     editor?.setEditable(!locked, false);
   }, [editor, locked]);
 
+  const presence = usePresence(doc.id, () => canEdit && Date.now() - lastTypedAt.current < EDITING_WINDOW_MS);
+  // Set when the server has a newer version and we have nothing unsaved to lose by reloading.
+  const [updatedBy, setUpdatedBy] = useState<string | null>(null);
   useEffect(() => {
-    document.title = `${title || "Untitled document"} - Ajaia Docs`;
+    if (presence && presence.version > version.current && !hasUnsaved()) setUpdatedBy(whoUpdated(presence.viewers));
+  }, [presence, hasUnsaved]);
+
+  useEffect(() => {
+    document.title = `${title} - Ajaia Docs`;
     return () => {
       document.title = "Ajaia Docs";
     };
   }, [title]);
 
-  const { flush } = autosave;
   const startCommentRef = useRef(startComment);
   startCommentRef.current = startComment;
   useEffect(() => {
-    const shortcuts = (event: globalThis.KeyboardEvent) => {
+    const shortcuts = (event: KeyboardEvent) => {
       if (!(event.ctrlKey || event.metaKey)) return;
       if (event.key.toLowerCase() === "s") {
         event.preventDefault();
@@ -173,60 +164,19 @@ function DocumentWorkspace({ doc, onReload }: { doc: DocumentDetail; onReload: (
     return () => window.removeEventListener("keydown", shortcuts);
   }, [flush]);
 
-  async function saveTitle() {
-    const next = title.trim();
-    if (!next) {
-      setTitle(savedTitle.current);
-      setHeaderError("Title can't be empty.");
-      return;
-    }
-    setTitle(next);
-    if (next === savedTitle.current) return;
+  /** Save the user's text to the clipboard (best effort) before telling them to reload. */
+  async function reportConflict() {
+    let copied = false;
     try {
-      await api.updateDocument(doc.id, { title: next });
-      savedTitle.current = next;
-      setHeaderError("");
-    } catch (err) {
-      setTitle(savedTitle.current);
-      setHeaderError(err instanceof ApiError ? err.detail : "Couldn't rename the document.");
+      await navigator.clipboard.writeText(editor?.getText() ?? "");
+      copied = true;
+    } catch {
+      // Clipboard can be blocked (permissions, unfocused tab); the banner just won't promise a copy.
     }
+    setConflict(copied ? CONFLICT_COPIED : CONFLICT);
   }
 
-  function handleTitleKey(event: KeyboardEvent<HTMLInputElement>) {
-    if (event.key === "Enter") event.currentTarget.blur();
-    if (event.key === "Escape") {
-      setTitle(savedTitle.current);
-      setTimeout(() => (event.target as HTMLInputElement).blur());
-    }
-  }
-
-  /** Export links download what the server has, so send any pending edits first. */
-  async function download(event: MouseEvent<HTMLAnchorElement>) {
-    setDownloadOpen(false);
-    if (!autosave.hasUnsaved()) return; // nothing pending: let the link download normally
-    event.preventDefault();
-    const href = event.currentTarget.href;
-    await autosave.flush();
-    window.location.assign(href); // Content-Disposition: attachment, so this downloads in place
-  }
-
-  function printPdf() {
-    setDownloadOpen(false);
-    window.print();
-  }
-
-  async function leave() {
-    if (!window.confirm(`Leave "${title}"? You'll lose access until the owner shares it again.`)) return;
-    await autosave.flush();
-    try {
-      await api.leaveDocument(doc.id);
-      navigate("/");
-    } catch (err) {
-      setHeaderError(err instanceof ApiError ? err.detail : "Couldn't leave the document.");
-    }
-  }
-
-  function openPanel(next: "history" | "comments" | null) {
+  function openPanel(next: Panel) {
     setPanel(next);
     setPreview(null);
     setCommentDraft(null);
@@ -244,14 +194,25 @@ function DocumentWorkspace({ doc, onReload }: { doc: DocumentDetail; onReload: (
 
   /** Save pending edits (so they land in history too), restore, then load the result. */
   async function restoreVersion(versionId: string) {
-    await autosave.flush();
+    await flush();
     await api.restoreVersion(doc.id, versionId);
     onReload();
   }
 
+  async function leave() {
+    if (!window.confirm(`Leave "${title}"? You'll lose access until the owner shares it again.`)) return;
+    await flush();
+    try {
+      await api.leaveDocument(doc.id);
+      navigate("/");
+    } catch (err) {
+      setHeaderError(err instanceof ApiError ? err.detail : "Couldn't leave the document.");
+    }
+  }
+
   async function goHome() {
-    await autosave.flush();
-    if (autosave.hasUnsaved() && !window.confirm("Some changes haven't been saved yet. Leave anyway?")) return;
+    await flush();
+    if (hasUnsaved() && !window.confirm("Some changes haven't been saved yet. Leave anyway?")) return;
     navigate("/");
   }
 
@@ -259,77 +220,60 @@ function DocumentWorkspace({ doc, onReload }: { doc: DocumentDetail; onReload: (
 
   return (
     <div className="editor-layout">
-      <TopBar>
+      <TopBar onHome={() => void goHome()}>
         <div className="editor-header">
-          <button className="icon-btn" aria-label="Back to documents" title="Back to documents" onClick={() => void goHome()}>
-            ←
-          </button>
-          <input
-            className="title-input"
-            aria-label="Document title"
-            value={title}
-            maxLength={200}
-            readOnly={!canEdit}
-            onChange={(e) => setTitle(e.target.value)}
-            onBlur={() => canEdit && void saveTitle()}
-            onKeyDown={handleTitleKey}
-          />
-          {canEdit ? (
-            <span className={`save-status status-${autosave.status}`} role="status">
-              {STATUS_LABEL[autosave.status]}
-            </span>
-          ) : (
-            <span className={`badge badge-${doc.role}`}>
-              {doc.role === "commenter" ? ROLE_LABEL.commenter : "View only"}
-            </span>
-          )}
+          <div className="doc-heading">
+            <div className="doc-heading-row">
+              <TitleInput
+                docId={doc.id}
+                initialTitle={doc.title}
+                canEdit={canEdit}
+                onRenamed={setTitle}
+                onError={setHeaderError}
+              />
+              {canEdit ? (
+                <span className={`save-status status-${autosave.status}`} role="status">
+                  {STATUS_LABEL[autosave.status]}
+                </span>
+              ) : (
+                <span className={`badge badge-${doc.role}`}>
+                  {doc.role === "commenter" ? ROLE_LABEL.commenter : "View only"}
+                </span>
+              )}
+            </div>
+            <FileMenu
+              docId={doc.id}
+              flush={flush}
+              hasUnsaved={hasUnsaved}
+              onVersionHistory={() => openPanel("history")}
+              onLeave={isOwner ? undefined : () => void leave()}
+              onError={setHeaderError}
+            />
+          </div>
           <span className="editor-header-spacer" />
           <PresenceAvatars viewers={presence?.viewers ?? []} />
           <button
-            className="btn"
+            className="header-icon-btn"
+            aria-label="Comments"
+            title="Comments"
             aria-pressed={panel === "comments"}
             onClick={() => openPanel(panel === "comments" ? null : "comments")}
           >
-            Comments
+            <Icon name="comment" size={22} />
           </button>
           <button
-            className="btn"
+            className="header-icon-btn"
+            aria-label="Version history"
+            title="Version history"
             aria-pressed={panel === "history"}
             onClick={() => openPanel(panel === "history" ? null : "history")}
           >
-            Version history
+            <Icon name="history" size={22} />
           </button>
-          <div className="menu" ref={downloadRef}>
-            <button
-              className="btn"
-              aria-haspopup="menu"
-              aria-expanded={downloadOpen}
-              onClick={() => setDownloadOpen((open) => !open)}
-            >
-              Download
-            </button>
-            {downloadOpen && (
-              <div className="menu-list" role="menu">
-                <a role="menuitem" href={api.exportUrl(doc.id, "md")} download onClick={(e) => void download(e)}>
-                  Markdown (.md)
-                </a>
-                <a role="menuitem" href={api.exportUrl(doc.id, "html")} download onClick={(e) => void download(e)}>
-                  Web page (.html)
-                </a>
-                <button role="menuitem" onClick={printPdf}>
-                  PDF (print)
-                </button>
-              </div>
-            )}
-          </div>
-          {!isOwner && (
-            <button className="btn" onClick={() => void leave()}>
-              Leave
-            </button>
-          )}
           {isOwner && (
-            <button className="btn btn-primary" onClick={() => setShareOpen(true)}>
-              Share
+            <button className="share-btn" aria-label="Share" onClick={() => setShareOpen(true)}>
+              <Icon name="lock" size={16} />
+              <span className="share-label">Share</span>
             </button>
           )}
         </div>

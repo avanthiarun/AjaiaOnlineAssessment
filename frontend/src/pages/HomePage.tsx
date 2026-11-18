@@ -210,7 +210,15 @@ function DocSection({ title, docs, empty, children }: DocSectionProps) {
       ) : docs.length === 0 ? (
         <p className="empty-state">{empty}</p>
       ) : (
-        <ul className="doc-list">{docs.map(children)}</ul>
+        <>
+          <div className="doc-list-header" aria-hidden="true">
+            <span className="doc-list-name">Name</span>
+            <span className="doc-owner">Owner</span>
+            <span className="doc-time">Last modified</span>
+            <span className="menu-spacer" />
+          </div>
+          <ul className="doc-list">{docs.map(children)}</ul>
+        </>
       )}
     </section>
   );

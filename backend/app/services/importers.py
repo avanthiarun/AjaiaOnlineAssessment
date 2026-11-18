@@ -25,6 +25,9 @@ LEGACY_DOC_MESSAGE = (
 ZIP_SIGNATURE = b"PK\x03\x04"
 PDF_SIGNATURE = b"%PDF-"
 PDF_MAX_PAGES = 50
+# .docx/.odt are zip archives: the upload limit caps the compressed size, this caps what it expands to.
+MAX_UNZIPPED_BYTES = 50 * 1024 * 1024
+TOO_BIG_UNZIPPED = "This file is too large once uncompressed"
 
 ODF_NS = {
     "office": "urn:oasis:names:tc:opendocument:xmlns:office:1.0",
@@ -69,10 +72,22 @@ def _txt_to_html(text: str) -> str:
     return "".join(f"<p>{html.escape(b.strip()).replace(chr(10), '<br>')}</p>" for b in blocks)
 
 
+def _check_unzipped_size(data: bytes) -> None:
+    """Reject zip bombs before a converter decompresses anything (sizes come from the zip index)."""
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as archive:
+            total = sum(info.file_size for info in archive.infolist())
+    except zipfile.BadZipFile:
+        return  # the converter reports the unreadable file with a format-specific message
+    if total > MAX_UNZIPPED_BYTES:
+        raise ValueError(TOO_BIG_UNZIPPED)
+
+
 def _docx_to_html(data: bytes) -> str:
     """Convert .docx with mammoth (keeping underline, which mammoth drops by default)."""
     if not data.startswith(ZIP_SIGNATURE):
         raise UnsupportedFileType("This does not look like a .docx file")
+    _check_unzipped_size(data)
     try:
         return mammoth.convert_to_html(io.BytesIO(data), style_map="u => u").value
     except Exception as exc:  # mammoth/zipfile raise many different error types
@@ -189,6 +204,7 @@ def _odt_to_html(data: bytes) -> str:
     """
     if not data.startswith(ZIP_SIGNATURE):
         raise UnsupportedFileType("This does not look like an .odt file")
+    _check_unzipped_size(data)
     try:
         with zipfile.ZipFile(io.BytesIO(data)) as archive:
             if "content.xml" not in archive.namelist():

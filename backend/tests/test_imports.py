@@ -1,6 +1,7 @@
 """Uploading files as new documents."""
 
 import io
+import zipfile
 from pathlib import Path
 
 import httpx
@@ -9,6 +10,7 @@ from fastapi.testclient import TestClient
 from pypdf import PdfWriter
 
 from app.config import get_settings
+from app.services import importers
 from app.services.importers import LEGACY_DOC_MESSAGE, SUPPORTED_EXTENSIONS, UNSUPPORTED_MESSAGE
 
 IMPORT_URL = "/api/documents/import"
@@ -182,3 +184,19 @@ def test_import_pdf_without_text_is_rejected(alice: TestClient) -> None:
 
     assert response.status_code == 400
     assert response.json() == {"detail": "This PDF has no selectable text (scanned PDFs aren't supported)"}
+
+
+@pytest.mark.parametrize("filename", ["bomb.docx", "bomb.odt"])
+def test_import_rejects_zip_that_expands_too_far(
+    alice: TestClient, monkeypatch: pytest.MonkeyPatch, filename: str
+) -> None:
+    monkeypatch.setattr(importers, "MAX_UNZIPPED_BYTES", 1024)  # same check, small numbers
+    archive = io.BytesIO()
+    with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("content.xml", "0" * 4096)  # 4 KB of zeros compresses to a few dozen bytes
+
+    response = upload(alice, filename, archive.getvalue())
+
+    assert response.status_code == 400
+    assert response.json() == {"detail": importers.TOO_BIG_UNZIPPED}
+    assert alice.get("/api/documents").json()["owned"] == []

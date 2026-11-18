@@ -1,34 +1,31 @@
 import type { ReactNode } from "react";
-import { Link, useNavigate } from "react-router-dom";
-import { useAuth } from "../auth/AuthContext";
+import { Link } from "react-router-dom";
+import { AccountMenu } from "./AccountMenu";
 
-/** App header: logo on the left, optional page content in the middle, user + sign out on the right. */
-export function TopBar({ children }: { children?: ReactNode }) {
-  const { user, logout } = useAuth();
-  const navigate = useNavigate();
+interface Props {
+  /** Page-specific header content (the editor puts the title, menus and actions here). */
+  children?: ReactNode;
+  /** Replaces the logo link's plain navigation, e.g. so the editor can save before leaving. */
+  onHome?: () => void;
+}
 
-  async function handleSignOut() {
-    await logout();
-    navigate("/login");
-  }
-
+/** App header like Google Docs: logo (home), page content, account avatar. */
+export function TopBar({ children, onHome }: Props) {
+  const logo = <img src="/favicon.svg" alt="" width={children ? 30 : 24} height={children ? 40 : 32} />;
   return (
-    <header className="topbar">
-      <Link to="/" className="topbar-brand">
-        <img src="/favicon.svg" alt="" width={24} height={32} />
-        <span>Ajaia Docs</span>
-      </Link>
-      <div className="topbar-middle">{children}</div>
-      {user && (
-        <div className="topbar-user">
-          <span className="topbar-name" title={user.email}>
-            {user.name}
-          </span>
-          <button className="btn" onClick={handleSignOut}>
-            Sign out
-          </button>
-        </div>
+    <header className={`topbar${children ? " topbar-editor" : ""}`}>
+      {onHome ? (
+        <button className="topbar-brand" aria-label="Back to documents" title="Back to documents" onClick={onHome}>
+          {logo}
+        </button>
+      ) : (
+        <Link to="/" className="topbar-brand" aria-label="Ajaia Docs home">
+          {logo}
+          {!children && <span>Ajaia Docs</span>}
+        </Link>
       )}
+      <div className="topbar-middle">{children}</div>
+      <AccountMenu />
     </header>
   );
 }
