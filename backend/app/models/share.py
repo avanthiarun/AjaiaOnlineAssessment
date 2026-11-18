@@ -15,7 +15,7 @@ if TYPE_CHECKING:
     from app.models.user import User
 
 
-class ShareRole(str, enum.Enum):
+class ShareRole(enum.StrEnum):
     """Access level a shared user has on a document."""
 
     VIEWER = "viewer"

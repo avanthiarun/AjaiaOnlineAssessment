@@ -17,7 +17,7 @@ class Settings(BaseSettings):
     env: Literal["development", "production"] = "development"
     database_url: str = "sqlite:///./local.db"
     session_secret: str = DEV_SESSION_SECRET
-    max_upload_mb: int = 2
+    max_upload_mb: int = 5
     seed_on_start: bool = True
 
     @model_validator(mode="after")

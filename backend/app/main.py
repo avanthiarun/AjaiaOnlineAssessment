@@ -1,18 +1,20 @@
 """FastAPI application: middleware, API routers and the built frontend (SPA)."""
 
+import logging
+import sys
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Request, Response
 from fastapi.exception_handlers import http_exception_handler
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.sessions import SessionMiddleware
 
 from app.config import get_settings
-from app.db import SessionLocal, init_db
+from app.db import SessionLocal, engine, init_db
 from app.routers import auth, documents, health, shares, uploads
 from app.services.seed import seed_demo_users
 
@@ -22,7 +24,20 @@ SECURITY_HEADERS = {
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",
     "Referrer-Policy": "strict-origin-when-cross-origin",
+    # 'unsafe-inline' styles are needed because ProseMirror/TipTap set inline style attributes.
+    "Content-Security-Policy": (
+        "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; "
+        "connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+    ),
+    "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
 }
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    stream=sys.stdout,
+)
+logger = logging.getLogger("app")
 
 settings = get_settings()
 
@@ -30,6 +45,8 @@ settings = get_settings()
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     """Create tables and optionally seed demo data on startup."""
+    # Only the environment and DB dialect: never the URL, which contains the password.
+    logger.info("Starting Ajaia Docs (env=%s, db=%s)", settings.env, engine.dialect.name)
     init_db()
     if settings.seed_on_start:
         with SessionLocal() as db:
@@ -46,6 +63,21 @@ app.add_middleware(
     same_site="lax",
     https_only=settings.is_production,
 )
+
+
+# Registered before security_headers so it runs inside it: the 500 still gets the headers.
+# A middleware (not @app.exception_handler(Exception)) because Starlette re-raises after such a
+# handler, which would make uvicorn log every traceback a second time.
+@app.middleware("http")
+async def catch_unhandled_errors(
+    request: Request, call_next: Callable[[Request], Awaitable[Response]]
+) -> Response:
+    """Log unexpected errors with a traceback (method + path only, never bodies) and return a generic 500."""
+    try:
+        return await call_next(request)
+    except Exception:
+        logger.exception("Unhandled error on %s %s", request.method, request.url.path)
+        return JSONResponse(status_code=500, content={"detail": "Internal server error"})
 
 
 @app.middleware("http")

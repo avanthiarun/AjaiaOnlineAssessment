@@ -20,6 +20,7 @@ export interface DocumentSummary {
   owner: User;
   role: Role;
   updated_at: string;
+  version: number;
 }
 
 export interface DocumentDetail extends DocumentSummary {
@@ -34,6 +35,11 @@ export interface DocumentList {
 export interface Share {
   user: User;
   role: ShareRole;
+}
+
+export interface ImportInfo {
+  extensions: string[];
+  max_mb: number;
 }
 
 export interface ShareList {
@@ -88,7 +94,7 @@ export const api = {
   listDocuments: () => request<DocumentList>("GET", "/documents"),
   createDocument: (title?: string) => request<DocumentDetail>("POST", "/documents", { title }),
   getDocument: (id: string) => request<DocumentDetail>("GET", `/documents/${id}`),
-  updateDocument: (id: string, changes: { title?: string; content_html?: string }) =>
+  updateDocument: (id: string, changes: { title?: string; content_html?: string; base_version?: number }) =>
     request<DocumentDetail>("PATCH", `/documents/${id}`, changes),
   deleteDocument: (id: string) => request<void>("DELETE", `/documents/${id}`),
   importDocument: (file: File) => {
@@ -96,6 +102,7 @@ export const api = {
     form.append("file", file);
     return request<DocumentDetail>("POST", "/documents/import", form);
   },
+  importInfo: () => request<ImportInfo>("GET", "/documents/import/info"),
   exportUrl: (id: string, format: "md" | "html") => `/api/documents/${id}/export?format=${format}`,
 
   // Sharing

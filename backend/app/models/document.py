@@ -28,6 +28,8 @@ class Document(Base):
     content_html: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now, onupdate=utc_now)
+    # Bumped on every content save; clients send it back as base_version to detect conflicts.
+    version: Mapped[int] = mapped_column(default=1, server_default="1")
 
     owner: Mapped["User"] = relationship()
     shares: Mapped[list["DocumentShare"]] = relationship(

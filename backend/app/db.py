@@ -4,7 +4,7 @@ from collections.abc import Iterator
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import DateTime, Engine, create_engine, event
+from sqlalchemy import DateTime, Engine, create_engine, event, inspect, text
 from sqlalchemy.engine.interfaces import Dialect
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 from sqlalchemy.types import TypeDecorator
@@ -68,11 +68,30 @@ def get_db() -> Iterator[Session]:
         yield db
 
 
-def init_db() -> None:
-    """Create all tables that do not exist yet.
+# (table, column, SQL type + constraints) added after the first production deploy.
+ADDED_COLUMNS = [("documents", "version", "INTEGER NOT NULL DEFAULT 1")]
 
-    We skip Alembic on purpose for the 4h timebox; create_all is enough for a fresh schema.
+
+def add_missing_columns(target: Engine) -> None:
+    """Add columns that create_all() cannot add to tables that already exist.
+
+    A deliberate stand-in for Alembic within the timebox: idempotent, additive only, and the
+    ALTER TABLE ... ADD COLUMN ... NOT NULL DEFAULT syntax works on both SQLite and Postgres.
+    """
+    inspector = inspect(target)
+    for table, column, ddl in ADDED_COLUMNS:
+        existing = {c["name"] for c in inspector.get_columns(table)}
+        if column not in existing:
+            with target.begin() as conn:
+                conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}"))
+
+
+def init_db() -> None:
+    """Create missing tables, then add any missing columns.
+
+    We skip Alembic on purpose for the 4h timebox; see add_missing_columns.
     """
     import app.models  # noqa: F401  (registers models on Base.metadata)
 
     Base.metadata.create_all(engine)
+    add_missing_columns(engine)

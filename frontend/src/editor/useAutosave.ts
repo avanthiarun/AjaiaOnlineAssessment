@@ -10,7 +10,7 @@ function isPermanent(err: unknown): err is ApiError {
   return err instanceof ApiError && err.status >= 400 && err.status < 500 && ![408, 429].includes(err.status);
 }
 
-interface SaveQueue {
+export interface SaveQueue {
   schedule: (html: string) => void;
   flush: () => Promise<void>;
   hasUnsaved: () => boolean;
@@ -20,14 +20,14 @@ interface SaveQueue {
  * Debounced, strictly sequential saving: at most one request in flight, and only the
  * latest content is sent next (intermediate edits are skipped, never sent out of order).
  */
-function createSaveQueue(
+export function createSaveQueue(
   save: (html: string) => Promise<void>,
   delayMs: number,
   onStatus: (status: SaveStatus, error?: string) => void,
 ): SaveQueue {
   let pending: string | null = null;
   let running: Promise<void> | null = null;
-  let timer: number | undefined;
+  let timer: ReturnType<typeof setTimeout> | undefined;
   let stopped = false;
 
   async function drain(): Promise<void> {
@@ -44,7 +44,7 @@ function createSaveQueue(
           onStatus("failed", err.detail);
         } else {
           onStatus("retrying");
-          timer = window.setTimeout(() => void flush(), RETRY_MS);
+          timer = setTimeout(() => void flush(), RETRY_MS);
         }
         return;
       }
@@ -53,7 +53,7 @@ function createSaveQueue(
   }
 
   function flush(): Promise<void> {
-    window.clearTimeout(timer);
+    clearTimeout(timer);
     running ??= drain().finally(() => {
       running = null;
     });
@@ -65,8 +65,8 @@ function createSaveQueue(
       if (stopped) return;
       pending = html;
       onStatus("saving");
-      window.clearTimeout(timer);
-      timer = window.setTimeout(() => void flush(), delayMs);
+      clearTimeout(timer);
+      timer = setTimeout(() => void flush(), delayMs);
     },
     flush,
     hasUnsaved: () => pending !== null || running !== null,

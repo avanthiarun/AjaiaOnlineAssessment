@@ -4,6 +4,7 @@ import re
 from typing import Literal
 
 from fastapi import APIRouter, Depends, Query, Response, status
+from fastapi.responses import JSONResponse
 from markdownify import markdownify
 from sqlalchemy.orm import Session
 
@@ -19,6 +20,8 @@ from app.schemas.document import (
     DocumentUpdate,
 )
 from app.services import documents as service
+
+CONFLICT_MESSAGE = "This document was changed by someone else."
 
 router = APIRouter(prefix="/api/documents", tags=["documents"])
 
@@ -53,16 +56,28 @@ def get_document(
     return DocumentDetail.from_doc(doc, role)
 
 
-@router.patch("/{doc_id}", response_model=DocumentDetail)
+@router.patch(
+    "/{doc_id}",
+    response_model=DocumentDetail,
+    responses={409: {"description": "Stale base_version; body includes current_version"}},
+)
 def update_document(
     doc_id: str,
     body: DocumentUpdate,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
-) -> DocumentDetail:
-    """Rename and/or save content (used by autosave)."""
+) -> DocumentDetail | JSONResponse:
+    """Rename and/or save content (used by autosave). 409 if base_version is stale."""
     doc, role = load_doc_for(db, doc_id, user, "edit")
-    doc = service.update_document(db, doc, title=body.title, content_html=body.content_html)
+    try:
+        doc = service.update_document(
+            db, doc, title=body.title, content_html=body.content_html, base_version=body.base_version
+        )
+    except service.VersionConflict as exc:
+        return JSONResponse(
+            status_code=status.HTTP_409_CONFLICT,
+            content={"detail": CONFLICT_MESSAGE, "current_version": exc.current_version},
+        )
     return DocumentDetail.from_doc(doc, role)
 
 

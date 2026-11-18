@@ -11,6 +11,8 @@ import { useAutosave, type SaveStatus } from "../editor/useAutosave";
 
 const NOT_FOUND = "This document doesn't exist or you don't have access.";
 const FORBIDDEN = "You no longer have permission to edit this document.";
+const CONFLICT = "Someone else edited this document. Reload to see their changes.";
+const CONFLICT_COPIED = `${CONFLICT} Your unsaved text is copied to the clipboard.`;
 
 /** Turn access errors from a save into the same wording the rest of the app uses. */
 function friendlySaveError(err: unknown): unknown {
@@ -24,6 +26,7 @@ export function EditorPage() {
   const { id = "" } = useParams();
   const [doc, setDoc] = useState<DocumentDetail | null>(null);
   const [error, setError] = useState("");
+  const [loadCount, setLoadCount] = useState(0); // bumping it re-fetches and remounts the workspace
 
   useEffect(() => {
     setDoc(null);
@@ -32,7 +35,7 @@ export function EditorPage() {
       .getDocument(id)
       .then(setDoc)
       .catch((err) => setError(err instanceof ApiError && err.status === 404 ? NOT_FOUND : "Could not open this document."));
-  }, [id]);
+  }, [id, loadCount]);
 
   if (error || !doc) {
     return (
@@ -53,7 +56,7 @@ export function EditorPage() {
       </>
     );
   }
-  return <DocumentWorkspace key={doc.id} doc={doc} />;
+  return <DocumentWorkspace key={`${doc.id}:${loadCount}`} doc={doc} onReload={() => setLoadCount((n) => n + 1)} />;
 }
 
 const STATUS_LABEL: Record<SaveStatus, string> = {
@@ -63,7 +66,7 @@ const STATUS_LABEL: Record<SaveStatus, string> = {
   failed: "Couldn't save",
 };
 
-function DocumentWorkspace({ doc }: { doc: DocumentDetail }) {
+function DocumentWorkspace({ doc, onReload }: { doc: DocumentDetail; onReload: () => void }) {
   const navigate = useNavigate();
   const canEdit = doc.role !== "viewer";
   const isOwner = doc.role === "owner";
@@ -72,14 +75,31 @@ function DocumentWorkspace({ doc }: { doc: DocumentDetail }) {
   const savedTitle = useRef(doc.title);
   const [titleError, setTitleError] = useState("");
   const [shareOpen, setShareOpen] = useState(false);
+  const [conflict, setConflict] = useState<string | null>(null);
+  // The version our content is based on; sent as base_version so stale saves get a 409.
+  const version = useRef(doc.version);
 
   const autosave = useAutosave(async (html) => {
     try {
-      await api.updateDocument(doc.id, { content_html: html });
+      const saved = await api.updateDocument(doc.id, { content_html: html, base_version: version.current });
+      version.current = saved.version;
     } catch (err) {
-      throw friendlySaveError(err);
+      if (err instanceof ApiError && err.status === 409) await reportConflict();
+      throw friendlySaveError(err); // 409 is a 4xx, so the queue stops instead of retrying
     }
   });
+
+  /** Save the user's text to the clipboard (best effort) before telling them to reload. */
+  async function reportConflict() {
+    let copied = false;
+    try {
+      await navigator.clipboard.writeText(editor?.getText() ?? "");
+      copied = true;
+    } catch {
+      // Clipboard can be blocked (permissions, unfocused tab); the banner just won't promise a copy.
+    }
+    setConflict(copied ? CONFLICT_COPIED : CONFLICT);
+  }
   const locked = !canEdit || autosave.status === "failed";
 
   const editor = useEditor({
@@ -184,10 +204,19 @@ function DocumentWorkspace({ doc }: { doc: DocumentDetail }) {
 
       {editor && <Toolbar editor={editor} disabled={locked} />}
 
-      {(titleError || saveError) && (
+      {conflict ? (
         <div className="banner banner-error editor-banner" role="alert">
-          {saveError ? `Couldn't save. ${saveError}` : titleError}
+          <span>{conflict}</span>
+          <button className="btn" onClick={onReload}>
+            Reload
+          </button>
         </div>
+      ) : (
+        (titleError || saveError) && (
+          <div className="banner banner-error editor-banner" role="alert">
+            {saveError ? `Couldn't save. ${saveError}` : titleError}
+          </div>
+        )
       )}
 
       <div className="page-scroll">

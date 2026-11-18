@@ -1,10 +1,25 @@
 import { useCallback, useEffect, useRef, useState, type ChangeEvent } from "react";
 import { useNavigate } from "react-router-dom";
-import { api, ApiError, type DocumentList, type DocumentSummary } from "../api/client";
+import { api, ApiError, type DocumentList, type DocumentSummary, type ImportInfo } from "../api/client";
 import { DocumentRow } from "../components/DocumentRow";
 import { TopBar } from "../components/TopBar";
 
-const ACCEPTED_TYPES = ".txt,.md,.docx";
+// Shown until /api/documents/import/info answers, or if it fails; the server is the source of truth.
+const DEFAULT_IMPORT_INFO: ImportInfo = {
+  extensions: [".txt", ".md", ".docx", ".odt", ".rtf", ".html", ".htm", ".pdf"],
+  max_mb: 5,
+};
+const FORMAT_NOTE = "Formatting is kept for .docx, .odt, .md and .html; .rtf and .pdf import as plain text.";
+
+/** "a, b and c" */
+function joinWithAnd(items: string[]): string {
+  return items.length < 2 ? items.join("") : `${items.slice(0, -1).join(", ")} and ${items[items.length - 1]}`;
+}
+
+function uploadHint({ extensions, max_mb }: ImportInfo): string {
+  const shown = extensions.filter((ext) => ext !== ".htm"); // .htm is just an alias of .html
+  return `Supports ${joinWithAnd(shown)} up to ${max_mb} MB. ${FORMAT_NOTE}`;
+}
 
 function errorMessage(err: unknown, fallback: string): string {
   return err instanceof ApiError ? err.detail : fallback;
@@ -20,6 +35,7 @@ export function HomePage() {
   const [actionError, setActionError] = useState("");
   const [busy, setBusy] = useState<"creating" | "uploading" | null>(null);
   const [startError, setStartError] = useState("");
+  const [importInfo, setImportInfo] = useState<ImportInfo>(DEFAULT_IMPORT_INFO);
 
   const load = useCallback(async () => {
     setDocs(null);
@@ -34,6 +50,13 @@ export function HomePage() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    api
+      .importInfo()
+      .then(setImportInfo)
+      .catch(() => setImportInfo(DEFAULT_IMPORT_INFO));
+  }, []);
 
   async function createBlank() {
     setBusy("creating");
@@ -107,10 +130,10 @@ export function HomePage() {
                 </span>
                 <span className="tile-label">{busy === "uploading" ? "Uploading…" : "Upload file"}</span>
               </button>
-              <input ref={fileInput} type="file" accept={ACCEPTED_TYPES} hidden onChange={(e) => void handleUpload(e)} />
+              <input ref={fileInput} type="file" accept={importInfo.extensions.join(",")} hidden onChange={(e) => void handleUpload(e)} />
             </div>
           </div>
-          <p className="muted small">Supports .txt, .md and .docx up to 2 MB</p>
+          <p className="muted small">{uploadHint(importInfo)}</p>
           {startError && (
             <p className="form-error" role="alert">
               {startError}

@@ -13,6 +13,7 @@ os.environ.update(
     DATABASE_URL=f"sqlite:///{_TEST_DB.as_posix()}",
     SESSION_SECRET="test-session-secret",
     SEED_ON_START="false",
+    MAX_UPLOAD_MB="5",
 )
 
 import pytest  # noqa: E402

@@ -2,7 +2,7 @@
 
 import nh3
 from fastapi import HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session, joinedload
 
 from app.db import utc_now
@@ -11,6 +11,15 @@ from app.models.document import DEFAULT_TITLE
 from app.permissions import Role
 
 MAX_CONTENT_BYTES = 500 * 1024
+
+
+class VersionConflict(Exception):
+    """The client's base_version is stale: someone else saved content in between."""
+
+    def __init__(self, current_version: int) -> None:
+        super().__init__(f"Document is at version {current_version}")
+        self.current_version = current_version
+
 
 # Covers what TipTap's StarterKit + Underline emit. Everything else (scripts, styles,
 # event handlers, iframes...) is stripped.
@@ -52,16 +61,34 @@ def create_document(db: Session, owner: User, title: str | None = None, content_
 
 
 def update_document(
-    db: Session, doc: Document, title: str | None = None, content_html: str | None = None
+    db: Session,
+    doc: Document,
+    title: str | None = None,
+    content_html: str | None = None,
+    base_version: int | None = None,
 ) -> Document:
-    """Apply a partial update; content is sanitized and updated_at always bumped."""
-    if title is not None:
-        doc.title = title
+    """Apply a partial update; content is sanitized and updated_at always bumped.
+
+    A content save bumps `version` with a compare-and-set UPDATE (atomic, so two simultaneous
+    saves can't both win). With base_version, a stale client gets VersionConflict; without it,
+    the save applies on top of the latest version (backwards compatible). Titles don't bump it.
+    """
     if content_html is not None:
         _check_content_size(content_html)
-        doc.content_html = sanitize_html(content_html)
+        expected = doc.version if base_version is None else base_version
+        result = db.execute(
+            update(Document)
+            .where(Document.id == doc.id, Document.version == expected)
+            .values(content_html=sanitize_html(content_html), version=expected + 1)
+        )
+        if result.rowcount == 0:
+            db.rollback()  # expires doc, so .version below is re-read from the database
+            raise VersionConflict(doc.version)
+    if title is not None:
+        doc.title = title
     doc.updated_at = utc_now()
     db.commit()
+    db.refresh(doc)
     return doc
 
 
